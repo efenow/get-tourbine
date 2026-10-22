@@ -99,33 +99,92 @@ ask() {
 }
 
 DOCKER=(docker)
+DISTRO_ID="unknown"
+DISTRO_NAME="unknown Linux"
+
+if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    DISTRO_ID="${ID:-unknown}"
+    DISTRO_NAME="${PRETTY_NAME:-$DISTRO_ID}"
+fi
+
+install_docker() {
+    command -v sudo >/dev/null 2>&1 || error "'sudo' is required to install Docker"
+    printf "%bDetected: %s%b\n" "${MUTED}" "$DISTRO_NAME" "${NC}"
+
+    case "$DISTRO_ID" in
+        debian|ubuntu|linuxmint)
+            sudo apt-get update
+            sudo apt-get install -y docker.io docker-compose-plugin \
+                || sudo apt-get install -y docker.io docker-compose
+            ;;
+        fedora|rhel|centos|rocky|almalinux)
+            printf "%bInstalling Docker from Docker's official installer%b\n" "${MUTED}" "${NC}"
+            docker_install_script="$(mktemp)"
+            curl -fsSL https://get.docker.com -o "$docker_install_script"
+            sudo sh "$docker_install_script"
+            rm -f "$docker_install_script"
+            ;;
+        arch|manjaro)
+            sudo pacman -Sy --needed --noconfirm docker docker-compose
+            ;;
+        opensuse*|sles)
+            sudo zypper --non-interactive install docker docker-compose
+            ;;
+        gentoo)
+            sudo emerge --ask=n app-containers/docker app-containers/docker-compose
+            ;;
+        slackware)
+            error "Slackware requires a manual Docker installation: https://docs.docker.com/engine/install/binaries/"
+            ;;
+        *)
+            error "Unsupported Linux distribution: $DISTRO_NAME. Install Docker manually: https://docs.docker.com/engine/install/"
+            ;;
+    esac
+}
 
 if ! command -v docker >/dev/null 2>&1; then
-    if [[ "$(uname -s)" != "Linux" ]]; then
-        error "Docker is not installed. Install Docker Desktop: https://docs.docker.com/get-docker/"
-    fi
-
+    [[ "$(uname -s)" == "Linux" ]] || error "Docker is not installed. Install Docker Desktop: https://docs.docker.com/get-docker/"
     ask "Docker is not installed. Install it now?" || error "Docker is required"
-    command -v sudo >/dev/null 2>&1 || error "'sudo' is required to install Docker"
-
-    printf "%bInstalling Docker from Docker's official installer%b\n" "${MUTED}" "${NC}"
-    docker_install_script="$(mktemp)"
-    curl -fsSL https://get.docker.com -o "$docker_install_script"
-    sudo sh "$docker_install_script"
-    rm -f "$docker_install_script"
+    install_docker
 fi
 
 command -v docker >/dev/null 2>&1 || error "Docker installation failed"
 
-if ! docker compose version >/dev/null 2>&1; then
-    if [[ "$(uname -s)" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
-        ask "Docker Compose is missing. Install it now?" || error "Docker Compose is required"
-        sudo apt-get update
-        sudo apt-get install -y docker-compose-plugin
-    fi
+if ! docker compose version >/dev/null 2>&1 && ! docker-compose version >/dev/null 2>&1; then
+    ask "Docker Compose is missing. Install it now?" || error "Docker Compose is required"
+
+    case "$DISTRO_ID" in
+        debian|ubuntu|linuxmint)
+            sudo apt-get update
+            sudo apt-get install -y docker-compose-plugin \
+                || sudo apt-get install -y docker-compose
+            ;;
+        fedora|rhel|centos|rocky|almalinux)
+            sudo dnf install -y docker-compose-plugin \
+                || sudo dnf install -y docker-compose
+            ;;
+        arch|manjaro)
+            sudo pacman -Sy --needed --noconfirm docker-compose
+            ;;
+        opensuse*|sles)
+            sudo zypper --non-interactive install docker-compose
+            ;;
+        gentoo)
+            sudo emerge --ask=n app-containers/docker-compose
+            ;;
+        *)
+            error "Cannot install Docker Compose automatically on $DISTRO_NAME: https://docs.docker.com/compose/install/"
+            ;;
+    esac
 fi
 
-docker compose version >/dev/null 2>&1 || error "Docker Compose is required: https://docs.docker.com/compose/install/"
+COMPOSE_MODE="plugin"
+if ! docker compose version >/dev/null 2>&1; then
+    docker-compose version >/dev/null 2>&1 || error "Docker Compose is required: https://docs.docker.com/compose/install/"
+    COMPOSE_MODE="legacy"
+fi
 
 if ! docker info >/dev/null 2>&1; then
     if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
@@ -134,6 +193,14 @@ if ! docker info >/dev/null 2>&1; then
         if command -v systemctl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
             if ask "Docker daemon is not running. Start it now?"; then
                 sudo systemctl start docker
+            fi
+        elif command -v rc-service >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
+            if ask "Docker daemon is not running. Start it now?"; then
+                sudo rc-service docker start
+            fi
+        elif command -v service >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
+            if ask "Docker daemon is not running. Start it now?"; then
+                sudo service docker start
             fi
         fi
 
@@ -146,6 +213,16 @@ if ! docker info >/dev/null 2>&1; then
         fi
     fi
 fi
+
+run_compose() {
+    if [[ "$COMPOSE_MODE" == "plugin" ]]; then
+        "${DOCKER[@]}" compose "$@"
+    elif [[ "${DOCKER[0]}" == "sudo" ]]; then
+        sudo docker-compose "$@"
+    else
+        docker-compose "$@"
+    fi
+}
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tourbine-install.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -173,7 +250,7 @@ fi
 printf "%bBuilding and starting Tourbine%b\n" "${MUTED}" "${NC}"
 (
     cd "$INSTALL_DIR"
-    "${DOCKER[@]}" compose up -d --build
+    run_compose up -d --build
 )
 
 printf "\n%bTourbine installed successfully.%b\n\n" "${GREEN}" "${NC}"
