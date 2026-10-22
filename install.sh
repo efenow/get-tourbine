@@ -227,31 +227,48 @@ run_compose() {
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tourbine-install.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-if [[ -e "$INSTALL_DIR/docker-compose.yml" ]]; then
-    printf "%bUsing existing Tourbine installation at %s%b\n" "${MUTED}" "$INSTALL_DIR" "${NC}"
+if [[ "$version" == "main" ]]; then
+    archive_url="$REPOSITORY/archive/refs/heads/main.tar.gz"
+    release_label="main"
 else
-    if [[ "$version" == "main" ]]; then
-        archive_url="$REPOSITORY/archive/refs/heads/main.tar.gz"
-        release_label="main"
-    else
-        archive_url="$REPOSITORY/archive/refs/tags/v${version}.tar.gz"
-        release_label="v${version}"
-    fi
+    archive_url="$REPOSITORY/archive/refs/tags/v${version}.tar.gz"
+    release_label="v${version}"
+fi
 
+download_source() {
     printf "%bDownloading Tourbine %s%b\n" "${MUTED}" "$release_label" "${NC}"
     curl -fsSL "$archive_url" -o "$tmp_dir/tourbine.tar.gz"
+    rm -rf "$tmp_dir/source"
     mkdir -p "$tmp_dir/source"
     tar -xzf "$tmp_dir/tourbine.tar.gz" --strip-components=1 -C "$tmp_dir/source"
 
     mkdir -p "$INSTALL_DIR"
     cp -R "$tmp_dir/source/." "$INSTALL_DIR/"
+}
+
+if [[ -e "$INSTALL_DIR/docker-compose.yml" ]]; then
+    printf "%bUsing existing Tourbine installation at %s%b\n" "${MUTED}" "$INSTALL_DIR" "${NC}"
+else
+    download_source
 fi
 
 printf "%bBuilding and starting Tourbine%b\n" "${MUTED}" "${NC}"
-(
+if ! (
     cd "$INSTALL_DIR"
     run_compose up -d --build
-)
+); then
+    printf "%bBuild failed. This may be a dependency conflict.%b\n" "${RED}" "${NC}" >&2
+    if ask "Download the selected Tourbine source again and retry without Docker cache?"; then
+        download_source
+        (
+            cd "$INSTALL_DIR"
+            run_compose build --no-cache
+            run_compose up -d
+        )
+    else
+        error "Tourbine build failed"
+    fi
+fi
 
 printf "\n%bTourbine installed successfully.%b\n\n" "${GREEN}" "${NC}"
 printf "  %bOpen%b  http://localhost:3000\n" "${MUTED}" "${NC}"
