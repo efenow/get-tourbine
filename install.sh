@@ -272,10 +272,21 @@ if [[ "$install_method" == "npm" ]]; then
     command -v npm >/dev/null 2>&1 || error "npm is required: https://nodejs.org/en/download"
 
     printf "%bInstalling npm dependencies%b\n" "${MUTED}" "${NC}"
-    (
+    if ! (
         cd "$INSTALL_DIR"
         npm ci --omit=dev
-    )
+    ); then
+        printf "%bDependency installation failed.%b\n" "${RED}" "${NC}" >&2
+        if ask "Download the selected Tourbine source again and retry npm install?"; then
+            download_source
+            (
+                cd "$INSTALL_DIR"
+                npm ci --omit=dev
+            )
+        else
+            error "npm dependency installation failed"
+        fi
+    fi
 
     printf "%bStarting Tourbine with npm%b\n" "${MUTED}" "${NC}"
     (

@@ -97,7 +97,21 @@ try {
         try {
             Write-Host 'Installing npm dependencies...' -ForegroundColor DarkGray
             npm.cmd ci --omit=dev
-            if ($LASTEXITCODE -ne 0) { Fail 'npm dependency installation failed.' }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host 'Dependency installation failed.' -ForegroundColor Red
+                if (-not (Ask 'Download the selected Tourbine source again and retry npm install?')) {
+                    Fail 'npm dependency installation failed.'
+                }
+
+                $archive = Join-Path $TempDir 'tourbine.tar.gz'
+                $source = Join-Path $TempDir 'source'
+                Invoke-WebRequest "$Repository/archive/refs/heads/main.tar.gz" -OutFile $archive
+                New-Item -ItemType Directory -Force -Path $source | Out-Null
+                tar.exe -xzf $archive --strip-components=1 -C $source
+                Copy-Item (Join-Path $source '*') $InstallDir -Recurse -Force
+                npm.cmd ci --omit=dev
+                if ($LASTEXITCODE -ne 0) { Fail 'npm dependency retry failed.' }
+            }
 
             $env:NODE_ENV = 'production'
             $log = Join-Path $InstallDir 'tourbine.log'
