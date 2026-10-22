@@ -248,6 +248,9 @@ download_source() {
 
 if [[ -e "$INSTALL_DIR/docker-compose.yml" ]]; then
     printf "%bUsing existing Tourbine installation at %s%b\n" "${MUTED}" "$INSTALL_DIR" "${NC}"
+    if ask "Update Tourbine source before building?"; then
+        download_source
+    fi
 else
     download_source
 fi
