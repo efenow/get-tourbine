@@ -86,36 +86,94 @@ printf "\n%bTourbine installer%b\n\n" "${ORANGE}" "${NC}"
 
 command -v curl >/dev/null 2>&1 || error "'curl' is required but not installed"
 command -v tar >/dev/null 2>&1 || error "'tar' is required but not installed"
-command -v docker >/dev/null 2>&1 || error "Docker is required: https://docs.docker.com/engine/install/"
-docker compose version >/dev/null 2>&1 || error "Docker Compose is required"
 
-if [[ -e "$INSTALL_DIR/docker-compose.yml" ]]; then
-    error "Tourbine is already installed at $INSTALL_DIR"
+ask() {
+    local answer
+
+    if [[ ! -r /dev/tty ]]; then
+        error "Interactive confirmation is required. Install Docker first: https://docs.docker.com/engine/install/"
+    fi
+
+    read -r -p "$1 [y/N] " answer < /dev/tty
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+DOCKER=(docker)
+
+if ! command -v docker >/dev/null 2>&1; then
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        error "Docker is not installed. Install Docker Desktop: https://docs.docker.com/get-docker/"
+    fi
+
+    ask "Docker is not installed. Install it now?" || error "Docker is required"
+    command -v sudo >/dev/null 2>&1 || error "'sudo' is required to install Docker"
+
+    printf "%bInstalling Docker from Docker's official installer%b\n" "${MUTED}" "${NC}"
+    docker_install_script="$(mktemp)"
+    curl -fsSL https://get.docker.com -o "$docker_install_script"
+    sudo sh "$docker_install_script"
+    rm -f "$docker_install_script"
+fi
+
+command -v docker >/dev/null 2>&1 || error "Docker installation failed"
+
+if ! docker compose version >/dev/null 2>&1; then
+    if [[ "$(uname -s)" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
+        ask "Docker Compose is missing. Install it now?" || error "Docker Compose is required"
+        sudo apt-get update
+        sudo apt-get install -y docker-compose-plugin
+    fi
+fi
+
+docker compose version >/dev/null 2>&1 || error "Docker Compose is required: https://docs.docker.com/compose/install/"
+
+if ! docker info >/dev/null 2>&1; then
+    if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+        DOCKER=(sudo docker)
+    else
+        if command -v systemctl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
+            if ask "Docker daemon is not running. Start it now?"; then
+                sudo systemctl start docker
+            fi
+        fi
+
+        if docker info >/dev/null 2>&1; then
+            DOCKER=(docker)
+        elif command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+            DOCKER=(sudo docker)
+        else
+            error "Cannot access Docker. Start Docker and grant your user access to /var/run/docker.sock"
+        fi
+    fi
 fi
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tourbine-install.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-if [[ "$version" == "main" ]]; then
-    archive_url="$REPOSITORY/archive/refs/heads/main.tar.gz"
-    release_label="main"
+if [[ -e "$INSTALL_DIR/docker-compose.yml" ]]; then
+    printf "%bUsing existing Tourbine installation at %s%b\n" "${MUTED}" "$INSTALL_DIR" "${NC}"
 else
-    archive_url="$REPOSITORY/archive/refs/tags/v${version}.tar.gz"
-    release_label="v${version}"
+    if [[ "$version" == "main" ]]; then
+        archive_url="$REPOSITORY/archive/refs/heads/main.tar.gz"
+        release_label="main"
+    else
+        archive_url="$REPOSITORY/archive/refs/tags/v${version}.tar.gz"
+        release_label="v${version}"
+    fi
+
+    printf "%bDownloading Tourbine %s%b\n" "${MUTED}" "$release_label" "${NC}"
+    curl -fsSL "$archive_url" -o "$tmp_dir/tourbine.tar.gz"
+    mkdir -p "$tmp_dir/source"
+    tar -xzf "$tmp_dir/tourbine.tar.gz" --strip-components=1 -C "$tmp_dir/source"
+
+    mkdir -p "$INSTALL_DIR"
+    cp -R "$tmp_dir/source/." "$INSTALL_DIR/"
 fi
-
-printf "%bDownloading Tourbine %s%b\n" "${MUTED}" "$release_label" "${NC}"
-curl -fsSL "$archive_url" -o "$tmp_dir/tourbine.tar.gz"
-mkdir -p "$tmp_dir/source"
-tar -xzf "$tmp_dir/tourbine.tar.gz" --strip-components=1 -C "$tmp_dir/source"
-
-mkdir -p "$INSTALL_DIR"
-cp -R "$tmp_dir/source/." "$INSTALL_DIR/"
 
 printf "%bBuilding and starting Tourbine%b\n" "${MUTED}" "${NC}"
 (
     cd "$INSTALL_DIR"
-    docker compose up -d --build
+    "${DOCKER[@]}" compose up -d --build
 )
 
 printf "\n%bTourbine installed successfully.%b\n\n" "${GREEN}" "${NC}"
