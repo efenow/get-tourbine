@@ -98,6 +98,17 @@ ask() {
     [[ "$answer" =~ ^[Yy]$ ]]
 }
 
+printf "How would you like to install Tourbine?\n"
+printf "  1) Docker (recommended for servers and production)\n"
+printf "  2) npm (recommended for local development)\n"
+read -r -p "Choose [1/2]: " install_method < /dev/tty
+case "$install_method" in
+    1) install_method="docker" ;;
+    2) install_method="npm" ;;
+    *) error "Choose 1 for Docker or 2 for npm" ;;
+esac
+
+if [[ "$install_method" == "docker" ]]; then
 DOCKER=(docker)
 DISTRO_ID="unknown"
 DISTRO_NAME="unknown Linux"
@@ -223,6 +234,7 @@ run_compose() {
         docker-compose "$@"
     fi
 }
+fi
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tourbine-install.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -246,7 +258,7 @@ download_source() {
     cp -R "$tmp_dir/source/." "$INSTALL_DIR/"
 }
 
-if [[ -e "$INSTALL_DIR/docker-compose.yml" ]]; then
+if [[ -e "$INSTALL_DIR/docker-compose.yml" || -e "$INSTALL_DIR/package.json" ]]; then
     printf "%bUsing existing Tourbine installation at %s%b\n" "${MUTED}" "$INSTALL_DIR" "${NC}"
     if ask "Update Tourbine source before building?"; then
         download_source
@@ -255,21 +267,39 @@ else
     download_source
 fi
 
-printf "%bBuilding and starting Tourbine%b\n" "${MUTED}" "${NC}"
-if ! (
-    cd "$INSTALL_DIR"
-    run_compose up -d --build
-); then
-    printf "%bBuild failed. This may be a dependency conflict.%b\n" "${RED}" "${NC}" >&2
-    if ask "Download the selected Tourbine source again and retry without Docker cache?"; then
-        download_source
-        (
-            cd "$INSTALL_DIR"
-            run_compose build --no-cache
-            run_compose up -d
-        )
-    else
-        error "Tourbine build failed"
+if [[ "$install_method" == "npm" ]]; then
+    command -v node >/dev/null 2>&1 || error "Node.js is required: https://nodejs.org/en/download"
+    command -v npm >/dev/null 2>&1 || error "npm is required: https://nodejs.org/en/download"
+
+    printf "%bInstalling npm dependencies%b\n" "${MUTED}" "${NC}"
+    (
+        cd "$INSTALL_DIR"
+        npm ci --omit=dev
+    )
+
+    printf "%bStarting Tourbine with npm%b\n" "${MUTED}" "${NC}"
+    (
+        cd "$INSTALL_DIR"
+        NODE_ENV=production nohup npm start > tourbine.log 2>&1 &
+        echo $! > tourbine.pid
+    )
+else
+    printf "%bBuilding and starting Tourbine%b\n" "${MUTED}" "${NC}"
+    if ! (
+        cd "$INSTALL_DIR"
+        run_compose up -d --build
+    ); then
+        printf "%bBuild failed. This may be a dependency conflict.%b\n" "${RED}" "${NC}" >&2
+        if ask "Download the selected Tourbine source again and retry without Docker cache?"; then
+            download_source
+            (
+                cd "$INSTALL_DIR"
+                run_compose build --no-cache
+                run_compose up -d
+            )
+        else
+            error "Tourbine build failed"
+        fi
     fi
 fi
 
@@ -277,4 +307,8 @@ printf "\n%bTourbine installed successfully.%b\n\n" "${GREEN}" "${NC}"
 printf "  %bOpen%b  http://localhost:3000\n" "${MUTED}" "${NC}"
 printf "  %bPath%b  %s\n\n" "${MUTED}" "${NC}" "$INSTALL_DIR"
 printf "%bCreate your first admin account at /dashboard/setup.%b\n" "${MUTED}" "${NC}"
-printf "%bManage Tourbine with: cd %s && docker compose ps%b\n" "${MUTED}" "$INSTALL_DIR" "${NC}"
+if [[ "$install_method" == "docker" ]]; then
+    printf "%bManage Tourbine with: cd %s && docker compose ps%b\n" "${MUTED}" "$INSTALL_DIR" "${NC}"
+else
+    printf "%bManage Tourbine with: cd %s && cat tourbine.pid%b\n" "${MUTED}" "$INSTALL_DIR" "${NC}"
+fi
