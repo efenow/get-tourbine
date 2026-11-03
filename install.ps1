@@ -4,8 +4,35 @@ $Repository = 'https://github.com/efenow/tourbine'
 $InstallDir = if ($env:TOURBINE_DIR) { $env:TOURBINE_DIR } else { Join-Path $HOME '.tourbine' }
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('tourbine-install-' + [guid]::NewGuid())
 
+$Esc = [char]27
+$Blue = "$Esc[38;2;0;82;184m"
+$Slate = "$Esc[38;2;55;65;81m"
+$White = "$Esc[38;2;255;255;255m"
+$Orange = "$Esc[38;5;214m"
+$Muted = "$Esc[2m"
+$Red = "$Esc[31m"
+$Green = "$Esc[32m"
+$Reset = "$Esc[0m"
+
+function Write-Theme([string]$Text, [string]$Color = '') {
+    Write-Host "$Color$Text$Reset"
+}
+
+function Write-Logo {
+    Write-Host ''
+    Write-Host "$Blue     ######$Reset"
+    Write-Host "$Blue     ########$White                                       #$Reset"
+    Write-Host "$Blue      #######$White            ##                         ##       ##$Reset"
+    Write-Host "$Blue       ######$White           #####  #####  ##   ## ##### ######   ## ######   #####$Reset"
+    Write-Host "$Slate   #####**##$White             ##   ##   ## ##   ## ###   ##   ### ## ##   ## ##   ##$Reset"
+    Write-Host "$Slate ##################$White      ##   ##   ## ##   ## ##    ##   %## ## ##   ## ##$Reset"
+    Write-Host "$Slate#######  ##########$White      ####  #####   ###### ##    #######  ## ##   ##  #####$Reset"
+    Write-Host "$Slate #####    ########$Reset"
+    Write-Host "$Slate  ###        #%$Reset"
+}
+
 function Fail([string]$Message) {
-    Write-Error $Message
+    [Console]::Error.WriteLine("$Red$Message$Reset")
     exit 1
 }
 
@@ -14,13 +41,14 @@ function Ask([string]$Message) {
     return $answer -match '^[Yy]$'
 }
 
+Write-Logo
 Write-Host ''
-Write-Host 'Tourbine installer' -ForegroundColor DarkYellow
+Write-Theme 'Tourbine installer' $Orange
 Write-Host ''
 
-Write-Host 'How would you like to install Tourbine?'
-Write-Host '  1) Docker (recommended for servers and production)'
-Write-Host '  2) npm (recommended for local development)'
+Write-Theme 'How would you like to install Tourbine?' $Muted
+Write-Theme '  1) Docker (recommended for servers and production)' $Muted
+Write-Theme '  2) npm (recommended for local development)' $Muted
 $installMethod = Read-Host 'Choose [1/2]'
 if ($installMethod -notin @('1', '2')) {
     Fail 'Choose 1 for Docker or 2 for npm.'
@@ -31,7 +59,7 @@ if ($installMethod -eq '1') {
     if (-not $docker) {
     if ((Get-Command winget -ErrorAction SilentlyContinue) -and (Ask 'Docker Desktop is missing. Install it with winget?')) {
         winget install --id Docker.DockerDesktop --exact --accept-package-agreements --accept-source-agreements
-        Write-Host 'Docker Desktop installed. Start it, then run this installer again.' -ForegroundColor Yellow
+        Write-Theme 'Docker Desktop installed. Start it, then run this installer again.' $Orange
         exit 0
     }
 
@@ -48,7 +76,7 @@ if ($LASTEXITCODE -ne 0) {
     $dockerDesktop = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
     if ((Test-Path $dockerDesktop) -and (Ask 'Docker Desktop is not running. Start it now?')) {
         Start-Process $dockerDesktop
-        Write-Host 'Waiting for Docker Desktop...' -ForegroundColor DarkGray
+        Write-Theme 'Waiting for Docker Desktop...' $Muted
         for ($i = 0; $i -lt 60; $i++) {
             Start-Sleep -Seconds 2
             docker info *> $null
@@ -67,7 +95,7 @@ New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 try {
     $composeFile = Join-Path $InstallDir 'docker-compose.yml'
     if ((Test-Path $composeFile) -or (Test-Path (Join-Path $InstallDir 'package.json'))) {
-        Write-Host "Using existing Tourbine installation at $InstallDir" -ForegroundColor DarkGray
+        Write-Theme "Using existing Tourbine installation at $InstallDir" $Muted
         if (Ask 'Update Tourbine source before building?') {
             $archive = Join-Path $TempDir 'tourbine.tar.gz'
             $source = Join-Path $TempDir 'source'
@@ -95,10 +123,10 @@ try {
 
         Push-Location $InstallDir
         try {
-            Write-Host 'Installing npm dependencies...' -ForegroundColor DarkGray
+            Write-Theme 'Installing npm dependencies...' $Muted
             npm.cmd ci --omit=dev
             if ($LASTEXITCODE -ne 0) {
-                Write-Host 'Dependency installation failed.' -ForegroundColor Red
+                Write-Theme 'Dependency installation failed.' $Red
                 if (-not (Ask 'Download the selected Tourbine source again and retry npm install?')) {
                     Fail 'npm dependency installation failed.'
                 }
@@ -124,10 +152,10 @@ try {
     } else {
         Push-Location $InstallDir
         try {
-            Write-Host 'Building and starting Tourbine...' -ForegroundColor DarkGray
+            Write-Theme 'Building and starting Tourbine...' $Muted
             docker compose up -d --build
             if ($LASTEXITCODE -ne 0) {
-                Write-Host 'Build failed. This may be a dependency conflict.' -ForegroundColor Red
+                Write-Theme 'Build failed. This may be a dependency conflict.' $Red
                 if (-not (Ask 'Retry with a fresh source download and no Docker cache?')) {
                     Fail 'Tourbine build failed.'
                 }
@@ -146,7 +174,9 @@ try {
 }
 
 Write-Host ''
-Write-Host 'Tourbine installed successfully.' -ForegroundColor Green
-Write-Host 'Open http://localhost:3000' -ForegroundColor DarkGray
-Write-Host "Path: $InstallDir" -ForegroundColor DarkGray
-Write-Host 'Create your first admin account at /dashboard/setup.' -ForegroundColor DarkGray
+Write-Theme 'Tourbine installed successfully.' $Green
+Write-Host ''
+Write-Theme '  Open  http://localhost:3000' $Muted
+Write-Theme "  Path  $InstallDir" $Muted
+Write-Host ''
+Write-Theme 'Create your first admin account at /dashboard/setup.' $Muted
